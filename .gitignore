@@ -1,0 +1,31 @@
+# --- DVC: кэш и локальный remote (сами блобы не в Git) ---
+.dvc/cache/
+.dvc/tmp/
+.dvc/dvc_storage/
+dvc_storage/
+
+# --- Данные: сырые файлы не в Git; метаданные DVC — *.dvc в data/ коммитим ---
+/data/**/*.csv
+/data/**/*.zip
+/data/**/*.parquet
+/data/**/*.feather
+/data/**/*.pq
+!data/.gitkeep
+
+# --- Локальные тяжёлые утилиты ---
+minio.exe
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+.env
+.env.*
+
+# --- Jupyter / IDE ---
+.ipynb_checkpoints/
+.idea/
+.vscode/
