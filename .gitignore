@@ -11,6 +11,8 @@ dvc_storage/
 /data/**/*.feather
 /data/**/*.pq
 !data/.gitkeep
+!data/HomeCredit_columns_description.csv
+!data/sample_submission.csv
 
 # --- Локальные тяжёлые утилиты ---
 minio.exe
