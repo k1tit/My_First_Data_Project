@@ -1,7 +1,17 @@
-# Data Understanding — Home Credit Default Risk
+# HW4. Data Understanding — Home Credit Default Risk
 
 Проект: AI-система оценки финансового риска и поведенческого профиля клиента.  
-Данные: `data/`, воспроизведение — `download.py`, детальный прогон — `scripts/dataset_quality.py`, сводка — `reports/dataset_quality_summary.json`.
+
+**Файлы HW4:**
+
+| Файл | Назначение |
+|------|------------|
+| `data_understanding_hw4.md` | отчёт (этот документ) |
+| `scripts/dataset_quality_eda.py` | код EDA + построение графиков |
+| `reports/figures/*.png` | визуализации |
+| `reports/dataset_quality_summary.json` | числовая сводка |
+
+EDA выполнен скриптом `scripts/dataset_quality_eda.py`.
 
 ---
 
@@ -32,22 +42,55 @@
 
 ## 2. Базовый EDA и выводы для моделирования
 
+Ниже — **выводы**; **фактура анализа** (код и графики) — в `scripts/dataset_quality_eda.py` и `reports/figures/`.
+
+### 2.1 Распределение целевой переменной
+
+![Распределение TARGET](reports/figures/01_target_distribution.png)
+
+Дисбаланс классов: дефолт **8,07%** — нужен stratified split и метрики помимо accuracy.
+
+### 2.2 Пропуски
+
+![Топ пропусков](reports/figures/02_missing_top15.png)
+
+Максимальны признаки жилья (~66–70%); у `EXT_SOURCE_1` — **56%**, `EXT_SOURCE_3` — **20%**, `EXT_SOURCE_2` — **0,2%**.
+
+### 2.3 Связь признаков с TARGET
+
+![Корреляции с TARGET](reports/figures/03_corr_with_target.png)
+
+![EXT_SOURCE по TARGET](reports/figures/04_ext_source_by_target.png)
+
+![Доход по TARGET](reports/figures/05_income_by_target.png)
+
+Сильнее всего связаны внешние скоринги; у дефолта ниже `EXT_SOURCE_3` и медиана дохода (135k vs 148,5k).
+
+### 2.4 Аномалии и покрытие таблиц
+
+![DAYS_EMPLOYED](reports/figures/06_days_employed_anomaly.png)
+
+`DAYS_EMPLOYED == 365243` — **55 374** строк (18%) → заменить на NaN.
+
+![Покрытие таблиц](reports/figures/07_related_tables_coverage.png)
+
+Installments/bureau ~85–95% train; credit_card ~28%.
+
+### 2.5 Выводы для modeling
+
 **Качество ключей:** дубликатов `SK_ID_CURR` — 0.
-
-**Пропуски:** максимальны у признаков описания жилья (например `COMMONAREA_*`, `LIVINGAPARTMENTS_*`) — **~66–70%**; для модели — drop, отдельный флаг `missing` или не использовать в baseline. У `EXT_SOURCE_1` пропуски **56%**, у `EXT_SOURCE_2` **0,2%**, у `EXT_SOURCE_3` **20%** — разная стратегия impute.
-
-**Служебная аномалия:** `DAYS_EMPLOYED == 365243` — **55 374** строк (18%) — код «неизвестно»; заменить на пропуск, затем impute.
 
 **Типы признаков:** 106 числовых, 16 категориальных.
 
-**Связь с TARGET (|corr|, топ):** `EXT_SOURCE_3` (0,18), `EXT_SOURCE_2` (0,16), `EXT_SOURCE_1` (0,16), `DAYS_BIRTH` (0,08), региональные и флаги регистрации — внешние скоринги и возраст доминируют на анкете.
+**Топ |corr| с TARGET:** `EXT_SOURCE_3` (0,18), `EXT_SOURCE_2` (0,16), `EXT_SOURCE_1` (0,16), `DAYS_BIRTH` (0,08).
 
-**Выводы для modeling:**
+**Выводы:**
 
-- Обязательная обработка пропусков; отдельно — высокопропущенные блоки жилья.
-- Категориальные — target/frequency encoding или native cat в бустинге.
-- Поведенческий слой — агрегаты по `installments_payments` и `bureau` на `SK_ID_CURR`; без утечки из «будущего» относительно даты заявки.
-- Метрики с учётом дисбаланса: AUC-ROC (основная), PR-AUC, precision/recall; только **stratified** разбиение.
+- Обязательная обработка пропусков; высокопропущенные блоки жилья — drop или флаг missing.
+- `DAYS_EMPLOYED`: 365243 → NaN, затем impute.
+- Категориальные — encoding / cat в бустинге.
+- Поведенческий слой — join `installments_payments`, `bureau` на `SK_ID_CURR`.
+- Метрики: AUC-ROC, PR-AUC; только **stratified** разбиение.
 
 ---
 
