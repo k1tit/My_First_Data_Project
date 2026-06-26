@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home Credit — скоринг риска</title>
+  <style>
+    :root { --bg:#f4f6f9; --card:#fff; --accent:#1a56db; --danger:#c81e1e; --ok:#057a55; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); margin: 0; padding: 2rem; color: #111; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+    .sub { color: #555; margin-bottom: 1.5rem; }
+    .card { background: var(--card); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 1.5rem; }
+    .section-title { font-size: .95rem; font-weight: 600; margin: 1.25rem 0 .5rem; color: #222; }
+    .section-title:first-child { margin-top: 0; }
+    label { display: block; font-size: .85rem; margin-top: .75rem; color: #333; }
+    .hint { display: block; font-size: .78rem; color: #666; margin-top: .2rem; line-height: 1.35; }
+    .note { background: #f0f4ff; border-left: 3px solid var(--accent); padding: .75rem 1rem; margin: .5rem 0 0; font-size: .82rem; color: #444; line-height: 1.45; border-radius: 0 6px 6px 0; }
+    .error-banner { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: .75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: .9rem; }
+    input, select { width: 100%; padding: .5rem; margin-top: .25rem; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+    input[type=checkbox] { width: auto; margin-right: .4rem; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+    .checkbox-row { display: flex; align-items: center; margin-top: .75rem; font-size: .85rem; }
+    .checkbox-row label { display: inline; margin: 0; }
+    .disabled-block { opacity: .55; pointer-events: none; }
+    .payment-preview { font-size: .85rem; color: #1a56db; margin-top: .35rem; }
+    button { margin-top: 1.25rem; background: var(--accent); color: #fff; border: 0; padding: .75rem 1.5rem; border-radius: 8px; font-size: 1rem; cursor: pointer; }
+    button:hover { opacity: .9; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #eee; }
+    .risk-low { color: var(--ok); font-weight: 600; }
+    .risk-medium { color: #b45309; font-weight: 600; }
+    .risk-high { color: var(--danger); font-weight: 600; }
+    .links { margin-top: 1rem; font-size: .9rem; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Оценка кредитного риска</h1>
+  <p class="sub">Рабочее место кредитного менеджера Home Credit: вводите данные из анкеты и систем банка — сервис рассчитает вероятность дефолта.</p>
+
+  {% if error_message %}
+  <div class="error-banner">{{ error_message }}</div>
+  {% endif %}
+
+  <div class="card">
+    <form method="post" action="/score">
+
+      <p class="section-title">Данные из анкеты клиента</p>
+      <label>Ежемесячный доход, ₽
+        <input type="number" name="AMT_INCOME_TOTAL" value="150000" min="1" max="1000000000" required>
+        <span class="hint">Суммарный доход семьи или заявителя до вычета налогов.</span>
+      </label>
+      <label>Запрашиваемая сумма кредита, ₽
+        <input type="number" name="AMT_CREDIT" id="amt_credit" value="300000" min="1" max="1000000000" required>
+      </label>
+      <div class="row-2">
+        <label>Срок кредита, лет
+          <input type="number" name="loan_term_years" id="loan_term_years" value="5" min="1" max="30" step="1" required>
+        </label>
+        <label>Годовая ставка, %
+          <input type="number" name="interest_rate_annual" id="interest_rate" value="18" min="0" max="100" step="0.1" required>
+        </label>
+      </div>
+      <p class="payment-preview" id="payment_preview">Ежемесячный платёж ≈ — ₽</p>
+      <span class="hint">Платёж рассчитывается автоматически по формуле аннуитета.</span>
+
+      <p class="section-title">Заёмщик</p>
+      <label>Возраст, лет
+        <input type="number" name="age_years" value="33" min="18" max="100" required>
+      </label>
+      <div class="checkbox-row">
+        <input type="checkbox" name="is_pensioner" id="is_pensioner" value="on">
+        <label for="is_pensioner">Пенсионер (стаж не учитывается, доход — пенсия)</label>
+      </div>
+      <div id="employment_block">
+        <div class="row-2">
+          <label>Стаж на текущей работе, лет
+            <input type="number" name="employed_years" id="employed_years" value="5" min="0" max="60">
+          </label>
+          <label>и месяцев
+            <input type="number" name="employed_months" id="employed_months" value="0" min="0" max="11">
+          </label>
+        </div>
+        <span class="hint">Если клиент 50+ и стаж 0 — автоматически высокий риск (кроме пенсионеров).</span>
+      </div>
+
+      <p class="section-title">Справки из кредитных бюро</p>
+      <div class="note">
+        Эти поля — <strong>не для клиента</strong>. Их видит сотрудник банка в системе после запроса
+        в НБКИ и другие бюро: готовый балл «насколько человек платит по прошлым кредитам».
+        Обычно приходит 1–2 справки, иногда ни одной — тогда оставьте поле пустым.<br><br>
+        <strong>0</strong> — плохая история &nbsp;·&nbsp; <strong>1</strong> — отличная. Чем выше, тем ниже риск для банка.
+      </div>
+      <label>Бюро №1 — балл из системы
+        <input type="number" step="0.01" min="0" max="1" name="EXT_SOURCE_1" placeholder="из карточки заявки">
+      </label>
+      <label>Бюро №2 — балл из системы
+        <input type="number" step="0.01" min="0" max="1" name="EXT_SOURCE_2" placeholder="если есть вторая справка">
+      </label>
+      <label>Бюро №3 — балл из системы
+        <input type="number" step="0.01" min="0" max="1" name="EXT_SOURCE_3" placeholder="если есть третья справка">
+      </label>
+
+      <p class="section-title">Параметры заявки <span style="font-weight:400;color:#666">(из анкеты)</span></p>
+      <label>Тип кредита
+        <select name="NAME_CONTRACT_TYPE">
+          <option value="Cash loans">Потребительский кредит (фиксированная сумма)</option>
+          <option value="Revolving loans">Кредитная карта / возобновляемый лимит</option>
+        </select>
+        <span class="hint">Не ипотека. «Потребительский» — классический займ: одобрили сумму, платите по графику. «Карта/лимит» — можно снова пользоваться лимитом после погашения (как кредитка).</span>
+      </label>
+      <label id="income_type_block">Источник дохода
+        <select name="NAME_INCOME_TYPE" id="name_income_type">
+          <option value="Working">Работа по найму</option>
+          <option value="Commercial associate">Самозанятый / коммерческий партнёр</option>
+          <option value="State servant">Госслужащий</option>
+        </select>
+      </label>
+
+      <button type="submit">Оценить риск</button>
+    </form>
+  </div>
+
+  {% if history %}
+  <div class="card">
+    <h2 style="font-size:1.1rem;margin-top:0">Последние заявки</h2>
+    <table>
+      <tr><th>ID</th><th>Статус</th><th>Риск</th><th>P(дефолт)</th></tr>
+      {% for item in history %}
+      <tr>
+        <td><a href="/result/{{ item.request_id }}">#{{ item.request_id }}</a></td>
+        <td>{{ item.status }}</td>
+        <td>
+          {% if item.risk_level %}
+          <span class="risk-{{ item.risk_level }}">{{ item.risk_level }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{% if item.probability %}{{ '%.1f'|format(item.probability * 100) }}%{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <p class="links"><a href="/docs">REST API (Swagger)</a></p>
+</div>
+<script>
+(function () {
+  const credit = document.getElementById('amt_credit');
+  const years = document.getElementById('loan_term_years');
+  const rate = document.getElementById('interest_rate');
+  const preview = document.getElementById('payment_preview');
+  const pensioner = document.getElementById('is_pensioner');
+  const empBlock = document.getElementById('employment_block');
+  const incomeBlock = document.getElementById('income_type_block');
+
+  function calcPayment() {
+    const p = parseFloat(credit.value) || 0;
+    const y = parseFloat(years.value) || 0;
+    const r = parseFloat(rate.value) || 0;
+    if (p <= 0 || y <= 0) {
+      preview.textContent = 'Ежемесячный платёж ≈ — ₽';
+      return;
+    }
+    const n = Math.max(1, Math.round(y * 12));
+    let pay;
+    if (r <= 0) {
+      pay = p / n;
+    } else {
+      const rm = r / 100 / 12;
+      const f = Math.pow(1 + rm, n);
+      pay = p * rm * f / (f - 1);
+    }
+    preview.textContent = 'Ежемесячный платёж ≈ ' + Math.round(pay).toLocaleString('ru-RU') + ' ₽';
+  }
+
+  function togglePensioner() {
+    const on = pensioner.checked;
+    empBlock.classList.toggle('disabled-block', on);
+    incomeBlock.classList.toggle('disabled-block', on);
+    document.getElementById('employed_years').disabled = on;
+    document.getElementById('employed_months').disabled = on;
+    document.getElementById('name_income_type').disabled = on;
+    if (on) {
+      document.getElementById('employed_years').value = 0;
+      document.getElementById('employed_months').value = 0;
+    }
+  }
+
+  [credit, years, rate].forEach(el => el.addEventListener('input', calcPayment));
+  pensioner.addEventListener('change', togglePensioner);
+  calcPayment();
+  togglePensioner();
+})();
+</script>
+</body>
+</html>

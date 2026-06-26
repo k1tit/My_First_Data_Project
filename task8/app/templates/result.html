@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Результат #{{ request_id }}</title>
+  {% if result and result.status in ['pending', 'processing'] %}
+  <meta http-equiv="refresh" content="2">
+  {% endif %}
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f4f6f9; padding: 2rem; }
+    .card { max-width: 520px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+    .score { font-size: 2.5rem; font-weight: 700; margin: .5rem 0; }
+    .low { color: #057a55; } .medium { color: #b45309; } .high { color: #c81e1e; }
+    .pending { color: #666; font-size: 1.2rem; }
+    .meta { color: #666; font-size: .9rem; line-height: 1.5; margin-top: 1rem; }
+    .risk-label { font-size: 1.1rem; }
+    a { color: #1a56db; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Заявка #{{ request_id }}</h1>
+  {% if not result %}
+    <p>Заявка не найдена.</p>
+  {% elif result.status in ['pending', 'processing'] %}
+    <p class="pending">Статус: {{ result.status }} — ожидайте, воркер обрабатывает…</p>
+  {% elif result.status == 'failed' %}
+    <p style="color:#c81e1e">Ошибка: {{ result.error_message }}</p>
+  {% else %}
+    <p class="risk-label">Уровень риска для банка: <strong class="{{ result.risk_level }}">
+      {% if result.risk_level == 'low' %}низкий{% elif result.risk_level == 'medium' %}средний{% else %}высокий{% endif %}
+    </strong></p>
+    <p>Шанс, что клиент <strong>не вернёт</strong> кредит (дефолт):</p>
+    <div class="score {{ result.risk_level }}">{{ '%.1f'|format(result.probability * 100) }}%</div>
+    <p class="meta">Чем выше процент — тем хуже для банка.</p>
+  {% endif %}
+  <p><a href="/">← Новая заявка</a></p>
+</div>
+</body>
+</html>

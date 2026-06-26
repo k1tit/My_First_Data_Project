@@ -1,0 +1,98 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    image: home-credit-scoring-api:0.1
+    container_name: scoring-api
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: database
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PYTHONPATH: /srv
+    volumes:
+      - ./app:/srv/app
+      - ./shared:/srv/shared
+      - ./artifacts:/artifacts:ro
+    depends_on:
+      database:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - scoring-net
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    image: home-credit-scoring-worker:0.1
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: database
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PYTHONPATH: /srv
+    volumes:
+      - ./worker:/srv/worker
+      - ./shared:/srv/shared
+      - ./artifacts:/artifacts:ro
+    depends_on:
+      database:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    networks:
+      - scoring-net
+
+  database:
+    image: postgres:16
+    container_name: scoring-database
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scoring-net
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: scoring-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5674:5672"
+      - "15673:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - scoring-net
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  scoring-net:
+    driver: bridge
