@@ -56,12 +56,6 @@ docker compose up --build
 
 ---
 
-## Ссылка для сдачи
-
-```
-https://github.com/k1tit/My_First_Data_Project/tree/hw8/task8
-```
-
 ## Статус
 
 - [x] 1. Доменная модель
