@@ -23,9 +23,7 @@ def code(text: str):
 
 md("""# ДЗ 7. Улучшение модели скоринга (Home Credit)
 
-**Продукт:** AI-система оценки кредитного риска.
-
-**Цель:** улучшить baseline из ДЗ 5–6 и подготовить модель к MVP — с явным pipeline данных, постобработкой скоров и развёрнутым анализом качества.
+**Продукт:** AI-система оценки финансового риска и поведенческого профиля клиента.
 
 **Данные:** [Яндекс.Диск — data.rar](https://disk.yandex.ru/client/disk?idApp=client&dialog=slider&idDialog=%2Fdisk%2Fdata.rar) — распаковать в `data/`.
 
@@ -53,8 +51,10 @@ from sklearn.calibration import calibration_curve
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import (
     average_precision_score,
+    brier_score_loss,
     confusion_matrix,
     f1_score,
+    log_loss,
     precision_recall_curve,
     precision_score,
     recall_score,
@@ -64,6 +64,11 @@ from sklearn.metrics import (
 from sklearn.model_selection import StratifiedKFold
 
 warnings.filterwarnings("ignore")
+try:
+    from tqdm import TqdmWarning
+    warnings.filterwarnings("ignore", category=TqdmWarning)
+except ImportError:
+    pass
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 logging.getLogger("lightgbm").setLevel(logging.ERROR)
 sns.set_theme(style="whitegrid")
@@ -216,38 +221,73 @@ print("Лучшие гиперпараметры (improved):", imp_params)
 md("""---
 # 3. Постобработка предсказаний
 
-1. **Калибровка** — Isotonic Regression на out-of-fold скорах (честная оценка без утечки).
+1. **Калибровка** — Isotonic Regression поверх OOF-скоров модели. Для **оценки** калибратор обучается fold-wise: на каждом фолде fit только на остальных фолдах, predict — на текущем (без in-sample fit/predict на тех же объектах).
 2. **Порог отсечения** — отказываем клиентам из верхних 20% по риску (бизнес-правило).
 3. **Бизнес-метрики** — bad rate среди одобренных и доля дефолтов в топ-10% риска.
+4. **Метрики калибровки** — Brier и log loss для сырого и OOS-калиброванного скора (AUC от isotonic почти не меняется).
 """)
 
 code("""y_arr = y.to_numpy()
 raw_oof = imp_res["oof"]
 
-iso = IsotonicRegression(out_of_bounds="clip")
-iso.fit(raw_oof, y_arr)
-cal_oof = iso.predict(raw_oof)
+
+def calibrate_oof_out_of_sample(scores: np.ndarray, y_true: np.ndarray) -> np.ndarray:
+    cal = np.zeros(len(y_true))
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+    for tr, va in skf.split(scores, y_true):
+        iso_fold = IsotonicRegression(out_of_bounds="clip")
+        iso_fold.fit(scores[tr], y_true[tr])
+        cal[va] = iso_fold.predict(scores[va])
+    return cal
+
+
+cal_oof = calibrate_oof_out_of_sample(raw_oof, y_arr)
 
 reject_share = 0.20
+threshold_raw = float(np.quantile(raw_oof, 1 - reject_share))
 threshold = float(np.quantile(cal_oof, 1 - reject_share))
+approved_raw = raw_oof < threshold_raw
 approved = cal_oof < threshold
 
+
 def bad_rate(mask):
-  return float(y_arr[mask].mean()) if mask.sum() else np.nan
+    return float(y_arr[mask].mean()) if mask.sum() else np.nan
+
 
 def topk_default_share(scores, k=0.10):
-  cut = np.quantile(scores, 1 - k)
-  top = scores >= cut
-  return float(y_arr[top].mean())
+    cut = np.quantile(scores, 1 - k)
+    top = scores >= cut
+    return float(y_arr[top].mean())
+
+
+calib_metrics = pd.DataFrame([
+    {
+        "скор": "сырой OOF",
+        "Brier": brier_score_loss(y_arr, raw_oof),
+        "log_loss": log_loss(y_arr, raw_oof),
+    },
+    {
+        "скор": "калибр. OOF (fold-wise)",
+        "Brier": brier_score_loss(y_arr, cal_oof),
+        "log_loss": log_loss(y_arr, np.clip(cal_oof, 1e-6, 1 - 1e-6)),
+    },
+])
+display(calib_metrics.round(4))
 
 post_df = pd.DataFrame([
-    {"вариант": "сырой скор", "bad_rate_одобренных": bad_rate(~(raw_oof >= np.quantile(raw_oof, 1-reject_share))),
-     "дефолт_в_топ10%": topk_default_share(raw_oof, 0.10)},
-    {"вариант": "калиброванный + порог top-20%", "bad_rate_одобренных": bad_rate(approved),
-     "дефолт_в_топ10%": topk_default_share(cal_oof, 0.10)},
+    {
+        "вариант": "сырой скор",
+        "bad_rate_одобренных": bad_rate(approved_raw),
+        "дефолт_в_топ10%": topk_default_share(raw_oof, 0.10),
+    },
+    {
+        "вариант": "калиброванный + порог top-20%",
+        "bad_rate_одобренных": bad_rate(approved),
+        "дефолт_в_топ10%": topk_default_share(cal_oof, 0.10),
+    },
 ])
 display(post_df.round(4))
-print(f"Порог отсечения (калибр. скор, top-{int(reject_share*100)}% риска): {threshold:.4f}")
+print(f"Порог отсечения (калибр. OOF, top-{int(reject_share*100)}% риска): {threshold:.4f}")
 """)
 
 md("""---
@@ -277,7 +317,6 @@ summary = pd.DataFrame([
 display(summary)
 print(f"Прирост AUC (improved − baseline): {d_mean:.4f} [{d_lo:.4f}; {d_hi:.4f}]")
 
-# ROC и PR кривые
 fpr_b, tpr_b, _ = roc_curve(y_arr, base_res["oof"])
 fpr_i, tpr_i, _ = roc_curve(y_arr, imp_res["oof"])
 prec_b, rec_b, _ = precision_recall_curve(y_arr, base_res["oof"])
@@ -297,18 +336,18 @@ axes[1].legend()
 plt.tight_layout()
 plt.show()
 
-# Calibration plot
+pt_raw, pp_raw = calibration_curve(y_arr, raw_oof, n_bins=10, strategy="quantile")
 pt, pp = calibration_curve(y_arr, cal_oof, n_bins=10, strategy="quantile")
 fig, ax = plt.subplots(figsize=(5, 4))
-ax.plot(pp, pt, marker="o", label="improved (калибр.)")
+ax.plot(pp_raw, pt_raw, marker="s", label="сырой OOF")
+ax.plot(pp, pt, marker="o", label="калибр. OOF (fold-wise)")
 ax.plot([0, 1], [0, 1], "k--", label="идеал")
 ax.set_xlabel("предсказанная вероятность")
 ax.set_ylabel("доля дефолтов")
-ax.set_title("Калибровка вероятностей")
+ax.set_title("Калибровка вероятностей (OOS)")
 ax.legend()
 plt.show()
 
-# Confusion matrix при пороге top-20%
 y_pred = (cal_oof >= threshold).astype(int)
 cm = confusion_matrix(y_arr, y_pred)
 cm_df = pd.DataFrame(cm, index=["факт 0", "факт 1"], columns=["pred 0", "pred 1"])
@@ -319,13 +358,11 @@ print(
     f"F1={f1_score(y_arr, y_pred, zero_division=0):.4f}"
 )
 
-# Bad rate в top-K%
 for k in (0.05, 0.10, 0.20):
     print(f"Доля дефолтов в топ-{int(k*100)}% (improved): {topk_default_share(cal_oof, k):.4f}")
 """)
 
-code("""# Анализ по сегментам
-seg = pd.DataFrame({
+code("""seg = pd.DataFrame({
     "y": y_arr,
     "score": imp_res["oof"],
     "has_bureau": (df_improved["bureau_n_credits"].fillna(0) > 0).to_numpy(),
@@ -350,7 +387,6 @@ for name, mask in [
     })
 display(pd.DataFrame(rows).round(4))
 
-# Важность признаков (финальная модель на всех данных)
 final_model = lgb.LGBMClassifier(**imp_params, objective="binary", random_state=RANDOM_STATE, n_jobs=-1, verbose=-1)
 final_model.fit(X_imp, y)
 imp = pd.Series(final_model.feature_importances_, index=X_imp.columns).sort_values(ascending=False).head(15)
@@ -365,10 +401,9 @@ plt.show()
 md("""---
 ## Выводы
 
-- **Pipeline FE:** расширенный join таблиц + поведенческие и ratio-признаки дают больше сигнала, чем baseline HW5-6.
-- **Модель:** Improved LGBM с Optuna превосходит baseline на тех же сплитах (см. прирост AUC и PR-AUC выше).
-- **Постобработка:** калибровка и порог top-20% переводят скор в бизнес-решение (отказ/одобрение) с измеримым bad rate.
-- **MVP:** следующий шаг — сохранить `final_model` + `IsotonicRegression` + список признаков в артефакты и обернуть в API.
+- **Pipeline FE:** расширенный join и ratio/поведение увеличивают число признаков относительно baseline HW5-6 (audit §1, столбец «признаков» в model_cmp, §2).
+- **Модель:** Improved LGBM vs baseline на Stratified K-Fold (k=5); AUC, PR-AUC и 95% CI прироста — в model_cmp (§2) и summary (§4).
+- **Постобработка:** isotonic оценивается fold-wise OOS без in-sample утечки (§3). Brier, log loss, bad rate и top-10% — в calib_metrics и post_df; на этих метриках калибровка не даёт заметного улучшения относительно сырого OOF (значения совпадают или Δ≈0).
 """)
 
 nb = {
